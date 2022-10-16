@@ -82,10 +82,10 @@ if [[ -z ${CHOSEN_OPENVPN_CONFIG} ]]; then
     fi
   fi
 
-  if [[ "${VPN_CONFIG_SOURCE}" == "external" ]]; then
-    # shellcheck source=openvpn/fetch-external-configs.sh
-    ./etc/openvpn/fetch-external-configs.sh
-  fi
+#   if [[ "${VPN_CONFIG_SOURCE}" == "external" ]]; then
+#     # shellcheck source=openvpn/fetch-external-configs.sh
+#     ./etc/openvpn/fetch-external-configs.sh
+#   fi
 
   if [[ -x $VPN_PROVIDER_HOME/configure-openvpn.sh ]]; then
     echo "Executing setup script for $OPENVPN_PROVIDER"
