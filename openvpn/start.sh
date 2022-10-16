@@ -1,102 +1,150 @@
 #!/bin/bash
-VPN_PROVIDER="${OPENVPN_PROVIDER,,}"
-VPN_PROVIDER_CONFIGS="/etc/openvpn/${VPN_PROVIDER}"
-export VPN_PROVIDER_CONFIGS
+
+##
+# Get some initial setup out of the way.
+##
+
+if [[ -n "$REVISION" ]]; then
+  echo "Starting container with revision: $REVISION"
+fi
+
+[[ "${DEBUG}" == "true" ]] && set -x
+
+# If openvpn-pre-start.sh exists, run it
+if [[ -x /scripts/openvpn-pre-start.sh ]]; then
+  echo "Executing /scripts/openvpn-pre-start.sh"
+  /scripts/openvpn-pre-start.sh "$@"
+  echo "/scripts/openvpn-pre-start.sh returned $?"
+fi
+
+# Allow for overriding the DNS used directly in the /etc/resolv.conf
+if compgen -e | grep -q "OVERRIDE_DNS"; then
+    echo "One or more OVERRIDE_DNS addresses found. Will use them to overwrite /etc/resolv.conf"
+    echo "" > /etc/resolv.conf
+    for var in $(compgen -e | grep "OVERRIDE_DNS"); do
+        echo "nameserver $(printenv "$var")" >> /etc/resolv.conf
+    done
+fi
+
+# Test DNS resolution
+if ! nslookup ${HEALTH_CHECK_HOST:-"google.com"} 1>/dev/null 2>&1; then
+    echo "WARNING: initial DNS resolution test failed"
+fi
 
 # If create_tun_device is set, create /dev/net/tun
 if [[ "${CREATE_TUN_DEVICE,,}" == "true" ]]; then
+  echo "Creating TUN device /dev/net/tun"
   mkdir -p /dev/net
   mknod /dev/net/tun c 10 200
   chmod 0666 /dev/net/tun
 fi
 
-if [[ "${OPENVPN_PROVIDER}" == "**None**" ]] || [[ -z "${OPENVPN_PROVIDER-}" ]]; then
-  echo "OpenVPN provider not set. Exiting."
-  exit 1
-elif [[ ! -d "${VPN_PROVIDER_CONFIGS}" ]]; then
-  echo "Could not find OpenVPN provider: ${OPENVPN_PROVIDER}"
-  echo "Please check your settings."
-  exit 1
+##
+# Configure OpenVPN.
+# This basically means to figure out the config file to use as well as username/password
+##
+
+# If no OPENVPN_PROVIDER is given, we default to "custom" provider.
+VPN_PROVIDER="${OPENVPN_PROVIDER:-custom}"
+export VPN_PROVIDER="${VPN_PROVIDER,,}" # to lowercase
+export VPN_PROVIDER_HOME="/etc/openvpn/${VPN_PROVIDER}"
+mkdir -p "$VPN_PROVIDER_HOME"
+
+# Make sure that we have enough information to start OpenVPN
+if [[ -z $OPENVPN_CONFIG_URL ]] && [[ "${OPENVPN_PROVIDER}" == "**None**" ]] || [[ -z "${OPENVPN_PROVIDER-}" ]]; then
+  echo "ERROR: Cannot determine where to find your OpenVPN config. Both OPENVPN_CONFIG_URL and OPENVPN_PROVIDER is unset."
+  echo "You have to either provide a URL to the config you want to use, or set a configured provider that will download one for you."
+  echo "Exiting..." && exit 1
+fi
+echo "Using OpenVPN provider: ${VPN_PROVIDER^^}"
+
+if [[ -n $OPENVPN_CONFIG_URL ]]; then
+  echo "Found URL to single OpenVPN config, will download and use it."
+  CHOSEN_OPENVPN_CONFIG=$VPN_PROVIDER_HOME/downloaded_config.ovpn
+  curl -o "$CHOSEN_OPENVPN_CONFIG" -sSL "$OPENVPN_CONFIG_URL"
 fi
 
-echo "Using OpenVPN provider: ${OPENVPN_PROVIDER}"
+if [[ -z ${CHOSEN_OPENVPN_CONFIG} ]]; then
 
-# If openvpn-pre-start.sh exists, run it
-if [ -x /scripts/openvpn-pre-start.sh ]
-then
-   echo "Executing /scripts/openvpn-pre-start.sh"
-   /scripts/openvpn-pre-start.sh "$@"
-   echo "/scripts/openvpn-pre-start.sh returned $?"
-fi
+  # Support pulling configs from external config sources
+  VPN_CONFIG_SOURCE="${VPN_CONFIG_SOURCE:-auto}"
+  VPN_CONFIG_SOURCE="${VPN_CONFIG_SOURCE,,}" # to lowercase
 
-if [[ "${OPENVPN_PROVIDER^^}" = "NORDVPN" ]]
-then
-    if [[ -z $NORDVPN_PROTOCOL ]]
-    then
-      export NORDVPN_PROTOCOL=UDP
-    fi
+  echo "Running with VPN_CONFIG_SOURCE ${VPN_CONFIG_SOURCE}"
 
-    if [[ -z $NORDVPN_CATEGORY ]]
-    then
-      export NORDVPN_CATEGORY=P2P
-    fi
-
-    if [[ -n $OPENVPN_CONFIG ]]
-    then
-      tmp_Protocol="${OPENVPN_CONFIG##*.}"
-      export NORDVPN_PROTOCOL=${tmp_Protocol^^}
-      echo "Setting NORDVPN_PROTOCOL to: ${NORDVPN_PROTOCOL}"
-      ${VPN_PROVIDER_CONFIGS}/updateConfigs.sh --openvpn-config
-    elif [[ -n $NORDVPN_COUNTRY ]]
-    then
-      export OPENVPN_CONFIG=$(${VPN_PROVIDER_CONFIGS}/updateConfigs.sh)
+  if [[ "${VPN_CONFIG_SOURCE}" == "auto" ]]; then
+    if [[ -x $VPN_PROVIDER_HOME/configure-openvpn.sh ]]; then
+      echo "Provider ${VPN_PROVIDER^^} has a bundled setup script. Defaulting to internal config"
+      VPN_CONFIG_SOURCE=internal
     else
-      export OPENVPN_CONFIG=$(${VPN_PROVIDER_CONFIGS}/updateConfigs.sh --get-recommended)
+      echo "No bundled config script found for ${VPN_PROVIDER^^}. Defaulting to external config"
+      VPN_CONFIG_SOURCE=external
     fi
-elif [[ "${OPENVPN_PROVIDER^^}" = "FREEVPN" ]]
-then
-    FREEVPN_DOMAIN=${OPENVPN_CONFIG%%-*}
-    export OPENVPN_PASSWORD=$(curl -s https://freevpn.${FREEVPN_DOMAIN:-"be"}/accounts/ | grep Password |  sed s/"^.*Password\:.... "/""/g | sed s/"<.*"/""/g)
-elif [[ "${OPENVPN_PROVIDER^^}" = "VPNBOOK" ]]
-then
-    pwd_url=$(curl -s "https://www.vpnbook.com/freevpn" | grep -m2 "Password:" | tail -n1 | cut -d \" -f2)
-    curl -s -X POST --header "apikey: 5a64d478-9c89-43d8-88e3-c65de9999580" \
-      -F "url=https://www.vpnbook.com/${pwd_url}" \
-      -F 'language=eng' \
-      -F 'isOverlayRequired=true' \
-      -F 'FileType=.Auto' \
-      -F 'IsCreateSearchablePDF=false' \
-      -F 'isSearchablePdfHideTextLayer=true' \
-      -F 'scale=true' \
-      -F 'detectOrientation=false' \
-      -F 'isTable=false' \
-      "https://api.ocr.space/parse/image" -o /tmp/vpnbook_pwd
-    export OPENVPN_PASSWORD=$(cat /tmp/vpnbook_pwd  | awk -F',' '{ print $1 }' | awk -F':' '{print $NF}' | tr -d '"')
+  fi
+
+  if [[ "${VPN_CONFIG_SOURCE}" == "external" ]]; then
+    # shellcheck source=openvpn/fetch-external-configs.sh
+    ./etc/openvpn/fetch-external-configs.sh
+  fi
+
+  if [[ -x $VPN_PROVIDER_HOME/configure-openvpn.sh ]]; then
+    echo "Executing setup script for $OPENVPN_PROVIDER"
+    # Preserve $PWD in case it changes when sourcing the script
+    pushd -n "$PWD" > /dev/null
+    # shellcheck source=/dev/null
+    . "$VPN_PROVIDER_HOME"/configure-openvpn.sh
+    # Restore previous PWD
+    popd > /dev/null
+  fi
 fi
 
-if [[ -n "${OPENVPN_CONFIG-}" ]]; then
-  readarray -t OPENVPN_CONFIG_ARRAY <<< "${OPENVPN_CONFIG//,/$'\n'}"
-  ## Trim leading and trailing spaces from all entries. Inefficient as all heck, but works like a champ.
-  for i in "${!OPENVPN_CONFIG_ARRAY[@]}"; do
-    OPENVPN_CONFIG_ARRAY[${i}]="${OPENVPN_CONFIG_ARRAY[${i}]#"${OPENVPN_CONFIG_ARRAY[${i}]%%[![:space:]]*}"}"
-    OPENVPN_CONFIG_ARRAY[${i}]="${OPENVPN_CONFIG_ARRAY[${i}]%"${OPENVPN_CONFIG_ARRAY[${i}]##*[![:space:]]}"}"
-  done
-  if (( ${#OPENVPN_CONFIG_ARRAY[@]} > 1 )); then
-    OPENVPN_CONFIG_RANDOM=$((RANDOM%${#OPENVPN_CONFIG_ARRAY[@]}))
-    echo "${#OPENVPN_CONFIG_ARRAY[@]} servers found in OPENVPN_CONFIG, ${OPENVPN_CONFIG_ARRAY[${OPENVPN_CONFIG_RANDOM}]} chosen randomly"
-    OPENVPN_CONFIG="${OPENVPN_CONFIG_ARRAY[${OPENVPN_CONFIG_RANDOM}]}"
-  fi
-  if [[ -f "${VPN_PROVIDER_CONFIGS}/${OPENVPN_CONFIG}.ovpn" ]]; then
-    echo "Starting OpenVPN using config ${OPENVPN_CONFIG}.ovpn"
-    OPENVPN_CONFIG="${VPN_PROVIDER_CONFIGS}/${OPENVPN_CONFIG}.ovpn"
+if [[ -z ${CHOSEN_OPENVPN_CONFIG} ]]; then
+  # We still don't have a config. The user might have set a config in OPENVPN_CONFIG.
+  if [[ -n "${OPENVPN_CONFIG-}" ]]; then
+    readarray -t OPENVPN_CONFIG_ARRAY <<< "${OPENVPN_CONFIG//,/$'\n'}"
+
+    ## Trim leading and trailing spaces from all entries. Inefficient as all heck, but works like a champ.
+    for i in "${!OPENVPN_CONFIG_ARRAY[@]}"; do
+      OPENVPN_CONFIG_ARRAY[${i}]="${OPENVPN_CONFIG_ARRAY[${i}]#"${OPENVPN_CONFIG_ARRAY[${i}]%%[![:space:]]*}"}"
+      OPENVPN_CONFIG_ARRAY[${i}]="${OPENVPN_CONFIG_ARRAY[${i}]%"${OPENVPN_CONFIG_ARRAY[${i}]##*[![:space:]]}"}"
+    done
+
+    # If there were multiple configs (comma separated), select one of them
+    if (( ${#OPENVPN_CONFIG_ARRAY[@]} > 1 )); then
+      OPENVPN_CONFIG_RANDOM=$((RANDOM%${#OPENVPN_CONFIG_ARRAY[@]}))
+      echo "${#OPENVPN_CONFIG_ARRAY[@]} servers found in OPENVPN_CONFIG, ${OPENVPN_CONFIG_ARRAY[${OPENVPN_CONFIG_RANDOM}]} chosen randomly"
+      OPENVPN_CONFIG="${OPENVPN_CONFIG_ARRAY[${OPENVPN_CONFIG_RANDOM}]}"
+    fi
+
+    # Check that the chosen config exists.
+    if [[ -f "${VPN_PROVIDER_HOME}/${OPENVPN_CONFIG}.ovpn" ]]; then
+      echo "Starting OpenVPN using config ${OPENVPN_CONFIG}.ovpn"
+      CHOSEN_OPENVPN_CONFIG="${VPN_PROVIDER_HOME}/${OPENVPN_CONFIG}.ovpn"
+    else
+      echo "Supplied config ${OPENVPN_CONFIG}.ovpn could not be found."
+      echo "Your options for this provider are:"
+      ls "${VPN_PROVIDER_HOME}" | grep .ovpn
+      echo "NB: Remember to not specify .ovpn as part of the config name."
+      exit 1 # No longer fall back to default. The user chose a specific config - we should use it or fail.
+    fi
   else
-    echo "Supplied config ${OPENVPN_CONFIG}.ovpn could not be found."
-    echo "Using default OpenVPN gateway for provider ${VPN_PROVIDER}"
-    OPENVPN_CONFIG="${VPN_PROVIDER_CONFIGS}/default.ovpn"
+    echo "No VPN configuration provided. Using default."
+    CHOSEN_OPENVPN_CONFIG="${VPN_PROVIDER_HOME}/default.ovpn"
   fi
-else
-  echo "No VPN configuration provided. Using default."
-  OPENVPN_CONFIG="${VPN_PROVIDER_CONFIGS}/default.ovpn"
+fi
+
+MODIFY_CHOSEN_CONFIG="${MODIFY_CHOSEN_CONFIG:-true}"
+# The config file we're supposed to use is chosen, modify it to fit this container setup
+if [[ "${MODIFY_CHOSEN_CONFIG,,}" == "true" ]]; then
+  # shellcheck source=openvpn/modify-openvpn-config.sh
+  /etc/openvpn/modify-openvpn-config.sh "$CHOSEN_OPENVPN_CONFIG"
+fi
+
+# If openvpn-post-config.sh exists, run it
+if [[ -x /scripts/openvpn-post-config.sh ]]; then
+  echo "Executing /scripts/openvpn-post-config.sh"
+  /scripts/openvpn-post-config.sh "$CHOSEN_OPENVPN_CONFIG"
+  echo "/scripts/openvpn-post-config.sh returned $?"
 fi
 
 # add OpenVPN user/pass
@@ -105,9 +153,9 @@ if [[ "${OPENVPN_USERNAME}" == "**None**" ]] || [[ "${OPENVPN_PASSWORD}" == "**N
     echo "OpenVPN credentials not set. Exiting."
     exit 1
   fi
-  echo "Found existing OPENVPN credentials..."
+  echo "Found existing OPENVPN credentials at /config/openvpn-credentials.txt"
 else
-  echo "Setting OPENVPN credentials..."
+  echo "Setting OpenVPN credentials..."
   mkdir -p /config
   echo "${OPENVPN_USERNAME}" > /config/openvpn-credentials.txt
   echo "${OPENVPN_PASSWORD}" >> /config/openvpn-credentials.txt
@@ -119,9 +167,9 @@ echo "${TRANSMISSION_RPC_USERNAME}" > /config/transmission-credentials.txt
 echo "${TRANSMISSION_RPC_PASSWORD}" >> /config/transmission-credentials.txt
 
 # Persist transmission settings for use by transmission-daemon
-dockerize -template /etc/transmission/environment-variables.tmpl:/etc/transmission/environment-variables.sh
+python3 /etc/openvpn/persistEnvironment.py /etc/transmission/environment-variables.sh
 
-TRANSMISSION_CONTROL_OPTS="--script-security 2 --up-delay --up /etc/openvpn/tunnelUp.sh --down /etc/openvpn/tunnelDown.sh"
+TRANSMISSION_CONTROL_OPTS="--script-security 2 --up-delay --up /etc/openvpn/tunnelUp.sh --route-pre-down /etc/openvpn/tunnelDown.sh"
 
 ## If we use UFW or the LOCAL_NETWORK we need to grab network config info
 if [[ "${ENABLE_UFW,,}" == "true" ]] || [[ -n "${LOCAL_NETWORK-}" ]]; then
@@ -134,7 +182,7 @@ fi
 
 ## Open port to any address
 function ufwAllowPort {
-  typeset -n portNum=${1}
+  portNum=${1}
   if [[ "${ENABLE_UFW,,}" == "true" ]] && [[ -n "${portNum-}" ]]; then
     echo "allowing ${portNum} through the firewall"
     ufw allow ${portNum}
@@ -143,7 +191,8 @@ function ufwAllowPort {
 
 ## Open port to specific address.
 function ufwAllowPortLong {
-  typeset -n portNum=${1} sourceAddress=${2}
+  portNum=${1}
+  sourceAddress=${2}
 
   if [[ "${ENABLE_UFW,,}" == "true" ]] && [[ -n "${portNum-}" ]] && [[ -n "${sourceAddress-}" ]]; then
     echo "allowing ${sourceAddress} through the firewall to port ${portNum}"
@@ -160,6 +209,7 @@ if [[ "${ENABLE_UFW,,}" == "true" ]]; then
     ufw disable
     echo "" > /etc/ufw/user.rules
   fi
+
   # Enable firewall
   echo "enabling firewall"
   sed -i -e s/IPV6=yes/IPV6=no/ /etc/default/ufw
@@ -171,23 +221,23 @@ if [[ "${ENABLE_UFW,,}" == "true" ]]; then
     PEER_PORT="${TRANSMISSION_PEER_PORT}"
   fi
 
-  ufwAllowPort PEER_PORT
+  ufwAllowPort ${PEER_PORT}
 
   if [[ "${WEBPROXY_ENABLED,,}" == "true" ]]; then
-    ufwAllowPort WEBPROXY_PORT
+    ufwAllowPort ${WEBPROXY_PORT}
   fi
   if [[ "${UFW_ALLOW_GW_NET,,}" == "true" ]]; then
-    ufwAllowPortLong TRANSMISSION_RPC_PORT GW_CIDR
+    ufwAllowPortLong ${TRANSMISSION_RPC_PORT} ${GW_CIDR}
   else
-    ufwAllowPortLong TRANSMISSION_RPC_PORT GW
+    ufwAllowPortLong ${TRANSMISSION_RPC_PORT} ${GW}
   fi
 
   if [[ -n "${UFW_EXTRA_PORTS-}"  ]]; then
     for port in ${UFW_EXTRA_PORTS//,/ }; do
       if [[ "${UFW_ALLOW_GW_NET,,}" == "true" ]]; then
-        ufwAllowPortLong port GW_CIDR
+        ufwAllowPortLong ${port} ${GW_CIDR}
       else
-        ufwAllowPortLong port GW
+        ufwAllowPortLong ${port} ${GW}
       fi
     done
   fi
@@ -199,10 +249,10 @@ if [[ -n "${LOCAL_NETWORK-}" ]]; then
       echo "adding route to local network ${localNet} via ${GW} dev ${INT}"
       /sbin/ip route add "${localNet}" via "${GW}" dev "${INT}"
       if [[ "${ENABLE_UFW,,}" == "true" ]]; then
-        ufwAllowPortLong TRANSMISSION_RPC_PORT localNet
+        ufwAllowPortLong ${TRANSMISSION_RPC_PORT} ${localNet}
         if [[ -n "${UFW_EXTRA_PORTS-}" ]]; then
           for port in ${UFW_EXTRA_PORTS//,/ }; do
-            ufwAllowPortLong port localNet
+            ufwAllowPortLong ${port} ${localNet}
           done
         fi
       fi
@@ -210,4 +260,9 @@ if [[ -n "${LOCAL_NETWORK-}" ]]; then
   fi
 fi
 
-exec openvpn ${TRANSMISSION_CONTROL_OPTS} ${OPENVPN_OPTS} --config "${OPENVPN_CONFIG}"
+if [[ ${SELFHEAL:-false} != "false" ]]; then
+  /etc/scripts/selfheal.sh &
+fi
+
+# shellcheck disable=SC2086
+exec openvpn ${TRANSMISSION_CONTROL_OPTS} ${OPENVPN_OPTS} --config "${CHOSEN_OPENVPN_CONFIG}"
