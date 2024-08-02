@@ -1,6 +1,6 @@
 
-* [The container runs, but I can't access the web ui](#the_container_runs_but_i_cant_access_the_web_ui)
-* [How do I enable authentication in the web ui](#how_do_i_enable_authentication_in_the_web_ui)
+* [The container runs, but I can't access the web ui](#the_container_runs_but_i_cant_access_the_web_UI)
+* [How do I enable authentication in the web ui](#how_do_i_enable_authentication_in_the_web_UI)
 * [How do I verify that my traffic is using VPN](#how_do_i_verify_that_my_traffic_is_using_vpn)
 * [RTNETLINK answers: File exists](#rtnetlink_answers_file_exists)
 * [RTNETLINK answers: Invalid argument](#rtnetlink_answers_invalid_argument)
@@ -8,19 +8,19 @@
 * [Error resolving host address](#error_resolving_host_address)
 * [Container loses connection after some time](#container_loses_connection_after_some_time)
   * [Set the ping-exit option for OpenVPN and restart-flag in Docker](#set_the_ping-exit_option_for_openvpn_and_restart-flag_in_docker)
-  * [Use a third party tool to monitor and restart the container](#use_a_third_party_tool_to_monitor_and_restart_the_container)
-* [Send Username Password via file](#send_username_password_via_file)
+  * [Use a third-party tool to monitor and restart the container](#use_a_third-party_tool_to_monitor_and_restart_the_container)
+* [Send Username Password via file](#send_username_and_password_via_a_file)
 * [AUTH: Received control message: AUTH_FAILED](#auth_received_control_message_auth_failed)
 
-## The container runs, but I can't access the web ui
+## The container runs, but I can't access the web UI
 
 [TODO](https://github.com/haugene/docker-transmission-openvpn/issues/1558): Short explanation and link to [networking](vpn-networking.md)
 
-## How do I enable authentication in the web ui
+## How do I enable authentication in the web UI
 
 You can do this either by setting the appropriate fields in `settings.json` which is
-found in TRANSMISSION_HOME which defaults to `/data/transmission-home` so it will be available
-on your host where you mount the `/data` volume. Remember that Transmission overwrites the config
+found in TRANSMISSION_HOME which defaults to `/config/transmission-home` so it will be available
+on your host where you mount the `/config` volume. Remember that Transmission overwrites the config
 when it shuts down, so do this when the container is not running.
 
 Or you can set it using the convenience environment variables. They will then override the settings
@@ -36,6 +36,8 @@ easiest solution is just to avoid them. Make the password longer instead ;)
 Or write it into `settings.json` manually as first described.
 Also, look up differences between how [yaml special characters](https://support.asg.com/mob/mvw/10_0/mv_ag/using_quotes_with_yaml_special_characters.htm) are escaped vs [in docker run](https://github.com/haugene/docker-transmission-openvpn/issues/1767)
 
+Docker secrets are also supported for the rpc credentials. To use a secret, remove both the `TRANSMISSION_RPC_USERNAME` and `TRANSMISSION_RPC_PASSWORD` environment variables and add a secret named `rpc_creds`. The secret file must contain two lines, the first line is the username and the second line is the password. Then just add it as a secret to docker, and it will be picked up automatically. This is why the name of the secret is important.
+
 ## How do I verify that my traffic is using VPN
 
 There are many ways of doing this, and I welcome you to add to this list if you have any suggestions.
@@ -46,6 +48,8 @@ multiple endpoints for this but here are a few suggestions:
 * `curl http://ipinfo.io/ip`
 * `curl http://ipecho.net/plain`
 * `curl icanhazip.com`
+
+Example command: `docker exec <container-name> curl --silent "http://ipinfo.io/ip"`
 
 Or you could use a test torrent service to download a torrent file and then you can get the IP from that tracker.
 
@@ -75,7 +79,7 @@ but an invalid target route that would cause this error might be
 
 To check your value, you can use a [subnet calculator](https://www.calculator.net/ip-subnet-calculator.html). 
 * Enter your IP Address - the portion before the mask, `10.20.30.45` here
-* select the subnet that matches - the `/24` portion here
+* Select the subnet that matches - the `/24` portion here
 * Take the Network Address that is returned - `10.20.30.0` in this case 
 
 ## TUNSETIFF tun: Operation not permitted
@@ -86,11 +90,11 @@ This is an error where we haven't got too much information. If the hints above g
 
 ## Error resolving host address
 
-This error can happen multiple places in the scripts. The most common is that it happens with `curl` trying to download the latest .ovpn
-config bundle for those providers that has an update script, or that OpenVPN throws the error when trying to connect to the VPN server.
+This error can happen at multiple places in the scripts. The most common is that it happens with `curl` trying to download the latest .ovpn
+config bundle for those providers that have an update script, or that OpenVPN throws the error when trying to connect to the VPN server.
 
 The curl error looks something like `curl: (6) Could not resolve host: ...` and OpenVPN says `RESOLVE: Cannot resolve host address: ...`.
-Either way the problem is that your container does not have a valid DNS setup. We have two recommended ways of addressing this.
+Either way, the problem is that your container does not have a valid DNS setup. We have two recommended ways of addressing this.
 
 The first solution is to use the `dns` option offered by Docker. This is available in
 [Docker run](https://docs.docker.com/engine/reference/run/#network-settings) as well as
@@ -115,7 +119,7 @@ or more of these servers and they will be sorted alphabetically.
 
 **What is the difference between these solutions?**
 
-A good question as they both seem to override what DNS servers the container should use. However they are not equal.
+A good question as they both seem to override what DNS servers the container should use. However, they are not equal.
 
 The first solution uses the dns flags from Docker. This will mean that we instruct Docker to use these DNS servers for the container,
 but the resolv.conf file in the container will still point to the Docker DNS service. Docker might have many reasons for this but one of
@@ -124,8 +128,8 @@ and you want to be able to lookup the other containers based on their service na
 By using the `--dns` flags you should have both control of what DNS servers are used for external requests as well as container DNS lookup.
 
 The second solution is more direct. It rewrites the resolv.conf file so that it no longer refers to the Docker DNS service.
-The effects of this is that you lose Docker service discovery from the container (other containers in the same network can still resolve it)
-but you have cut out a middleman and potential point of error. I'm not sure why this some times is necessary but it has proven to fix
+The effect of this is that you lose Docker service discovery from the container (other containers in the same network can still resolve it)
+but you have cut out a middleman and potential point of error. I'm not sure why this sometimes is necessary but it has proven to fix
 the issue in some cases.
 
 **A possible third option**
@@ -137,7 +141,7 @@ solve the problem for you if it is your local network that in some way is blocki
 
 ## Container loses connection after some time
 
-For some users, on some platforms, apparently this is an issue. I have not encountered this myself - but there is no doubt that it's recurring.
+For some users, on some platforms, this is an issue. I have not encountered this myself - but there is no doubt that it's recurring.
 Why does the container lose connectivity? That we don't know and it could be many different reasons that manifest the same symptoms.
 We do however have some possible solutions.
 
@@ -148,7 +152,7 @@ The problem is that if the container has lost internet connection restarting Ope
 this option using `OPENVPN_OPTS=--inactive 3600 --ping 10 --ping-exit 60`. This will tell OpenVPN to exit when it cannot ping the server for 1 minute.
 
 When OpenVPN exits, the container will exit. And if you've then set `restart=always` or `restart=unless-stopped` in your Docker config then Docker will
-restart the container and that could/should restore connectivity. VPN providers sometime push options to their clients after they connect. This is visible
+restart the container and that could/should restore connectivity. VPN providers sometimes push options to their clients after they connect. This is visible
 in the logs if they do. If they push ping-restart that can override your settings. So you could consider adding `--pull-filter ignore ping` to the options above.
 
 This approach will probably work, especially if you're seeing logs like these from before:
@@ -157,20 +161,23 @@ Inactivity timeout (--ping-restart), restarting
 SIGUSR1[soft,ping-restart] received, process restarting
 ```
 
-### Use a third party tool to monitor and restart the container
+### Use a third-party tool to monitor and restart the container
 
 The container has a health check script that is run periodically. It will report the health status to Docker and the container will show as "unhealthy"
 if basic network connectivity is broken. You can write your own script and add it to cron, or you can use a tool like [https://github.com/willfarrell/docker-autoheal](https://github.com/willfarrell/docker-autoheal) to look for and restart unhealthy containers.
 
 This container has the `autoheal` label by default so it is compatible with the [willfarrell/autoheal image](https://hub.docker.com/r/willfarrell/autoheal/)
 
-## Send Username Password via file
 
-Depending on your setup, you may not want to send your vpn user/pass via environment variables (main reason being, it is accessible via docker inspect). If you prefer, there is a way to configure the container to use a file instead. 
+## Send Username and Password via a file
 
-*Procedure*
-1. create a text file with username and password in it, each on a separate line: eg:
-For this example we will pretend, it is located at: `./openvpn-credentials.txt`
+Depending on your setup, you may not want to send your VPN user/pass via environment variables (the main reason being, it is accessible via docker inspect). If you prefer, there are two methods of avoiding credentials to be set via environment variables:
+ - Option 1: Configure the container to use a file. 
+ - Option 2: Configure the container to use a `secret`. (Only available for Docker Swarm)
+
+*Procedure for Option 1: Configuring the container to use a file*
+1. Create a text file with a username and password in it, each on a separate line.
+For this example, we will assume it is located at `./openvpn-credentials.txt`
 ```
 this_is_my_username
 this_is_my_password
@@ -222,6 +229,52 @@ services:
         image: haugene/transmission-openvpn
 ```
 
+*Procedure for Option 2: Configure the container to use a `secret`*
+
+Note: [Docker Secrets](https://docs.docker.com/engine/swarm/secrets/) are only available for Docker Swarm (`docker-compose`). If you run the container standalone, refer to Option 1.
+
+1. Create a text file with a username and password in it, each on a separate line.
+For this example, we will assume it is located at `./openvpn-credentials.txt`
+```
+this_is_my_username
+this_is_my_password
+```
+
+1. Mount the file as a secret like below. *The name of the secret must be exactly `openvpn_creds`, which will be exposed to the container at `/run/secrets/openvpn_creds`.
+
+The example docker-compose.yml looks like this:
+
+```
+version: '3.3'
+secrets:
+  openvpn_creds:
+    file: './openvpn-credentials.txt'
+services:
+    transmission-openvpn:
+        cap_add:
+            - NET_ADMIN
+        volumes:
+            - '/your/storage/path/:/data'
+        environment:
+            - OPENVPN_PROVIDER=PIA
+            - OPENVPN_CONFIG=france
+            - OPENVPN_USERNAME=**None**
+            - OPENVPN_PASSWORD=**None**
+            - LOCAL_NETWORK=192.168.0.0/16
+        logging:
+            driver: json-file
+            options:
+                max-size: 10m
+        secrets:
+            - openvpn_creds
+        ports:
+            - '9091:9091'
+        image: haugene/transmission-openvpn
+```
+
+Bonus tip: The same steps can be followed for `rpc_creds`, as shown in [[How do I enable authentication in the web ui](#how_do_i_enable_authentication_in_the_web_UI)].
+
+
 ## AUTH: Received control message: AUTH_FAILED
 
 If your logs end like this, the wrong username/password was sent to your VPN provider.
@@ -235,9 +288,9 @@ up your credentials. We have had challenges with special characters. Having "?= 
 
 **NOTE** Some providers have multiple sets of credentials. Some for OpenVPN, others for web login, proxy solutions, etc.
 Make sure that you use the ones intended for OpenVPN. **PIA users:** this has recently changed. It used to be a separate pair, but now
-you should use the same login as you do in the web control panel. Before you were supposed to use a username like x12345, now its the p12345 one. There is also a 99 character limit on password length.
+you should use the same login as you do in the web control panel. Before you were supposed to use a username like x12345, now it's the p12345 one. There is also a 99 character limit on password length.
 
-First check that your credentials are correct. Some providers have separate credentials for OpenVPN so it might not be the same as for their apps.
+First, check that your credentials are correct. Some providers have separate credentials for OpenVPN so it might not be the same as for their apps.
 Secondly, test a few different servers just to make sure that it's not just a faulty server. If this doesn't resolve it, it's probably the container.
 
 To verify this you can mount a volume to `/config` in the container. So for example `/temporary/folder:/config`. Your credentials will be written to

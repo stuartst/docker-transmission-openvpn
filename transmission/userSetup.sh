@@ -1,6 +1,7 @@
 #!/bin/bash
 
 # More/less taken from https://github.com/linuxserver/docker-baseimage-alpine/blob/3eb7146a55b7bff547905e0d3f71a26036448ae6/root/etc/cont-init.d/10-adduser
+source /etc/openvpn/utils.sh
 
 RUN_AS=root
 
@@ -17,6 +18,7 @@ if [ -n "$PUID" ] && [ ! "$(id -u root)" -eq "$PUID" ]; then
       chown ${RUN_AS}:${RUN_AS} /dev/stdout
     fi
 
+
     # Make sure directories exist before chown and chmod
     mkdir -p /config \
         "${TRANSMISSION_HOME}" \
@@ -24,12 +26,12 @@ if [ -n "$PUID" ] && [ ! "$(id -u root)" -eq "$PUID" ]; then
         "${TRANSMISSION_INCOMPLETE_DIR}" \
         "${TRANSMISSION_WATCH_DIR}"
 
-    echo "Enforcing ownership on transmission config directories"
+    echo "Enforcing ownership on transmission directories"
     chown -R ${RUN_AS}:${RUN_AS} \
         /config \
         "${TRANSMISSION_HOME}"
 
-    echo "Applying permissions to transmission config directories"
+    echo "Applying permissions to transmission directories"
     chmod -R go=rX,u=rwX \
         /config \
         "${TRANSMISSION_HOME}"
@@ -42,17 +44,26 @@ if [ -n "$PUID" ] && [ ! "$(id -u root)" -eq "$PUID" ]; then
             "${TRANSMISSION_WATCH_DIR}"
 
         echo "Setting permissions for download and incomplete directories"
-        TRANSMISSION_UMASK_OCTAL=$(printf '%03g' $(printf '%o\n' $(jq .umask ${TRANSMISSION_HOME}/settings.json)))
-        DIR_PERMS=$(printf '%o\n' $((0777 & ~TRANSMISSION_UMASK_OCTAL)))
-        FILE_PERMS=$(printf '%o\n' $((0666 & ~TRANSMISSION_UMASK_OCTAL)))
-        echo "Mask: ${TRANSMISSION_UMASK_OCTAL}"
+        
+        if [ -z "$TRANSMISSION_UMASK" ] ; then
+            # fetch from settings.json if not defined in environment
+            # because updateSettings.py is called after this script is run
+            TRANSMISSION_UMASK=$(jq .umask ${TRANSMISSION_HOME}/settings.json | tr -d \" )
+        fi
+
+        TRANSMISSION_UMASK_OCTAL=$( printf "%o\n" "${TRANSMISSION_UMASK}" )
+
+        DIR_PERMS=$( printf '%o\n' $(( 8#777 & ~TRANSMISSION_UMASK)) )
+        FILE_PERMS=$( printf '%o\n' $(( 8#666 & ~TRANSMISSION_UMASK)) )
+        
+        echo "umask: ${TRANSMISSION_UMASK_OCTAL}"
         echo "Directories: ${DIR_PERMS}"
         echo "Files: ${FILE_PERMS}"
 
         find "${TRANSMISSION_DOWNLOAD_DIR}" "${TRANSMISSION_INCOMPLETE_DIR}" -type d \
-        -exec chmod $(printf '%o\n' $((0777 & ~TRANSMISSION_UMASK_OCTAL))) {} +
+        -exec chmod "${DIR_PERMS}" {} +
         find "${TRANSMISSION_DOWNLOAD_DIR}" "${TRANSMISSION_INCOMPLETE_DIR}" -type  f \
-        -exec chmod $(printf '%o\n' $((0666 & ~TRANSMISSION_UMASK_OCTAL))) {} +
+        -exec chmod "${FILE_PERMS}" {} +
 
         echo "Setting permission for watch directory (775) and its files (664)"
         chmod -R o=rX,ug=rwX \

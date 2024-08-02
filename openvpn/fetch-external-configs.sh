@@ -1,10 +1,12 @@
-#! /bin/bash
+#!/bin/bash
 
 set -o nounset
 set -o errexit
 set -o pipefail
 
-VPN_CONFIG_SOURCE_TYPE="${VPN_CONFIG_SOURCE_TYPE:-github_zip}"
+source /etc/openvpn/utils.sh
+
+VPN_CONFIG_SOURCE_TYPE="${VPN_CONFIG_SOURCE_TYPE:-github_clone}"
 
 # Set default GitHub config repo
 GITHUB_CONFIG_SOURCE_REPO="${GITHUB_CONFIG_SOURCE_REPO:-haugene/vpn-configs-contrib}"
@@ -20,7 +22,7 @@ if [[ "${VPN_CONFIG_SOURCE_TYPE}" == "github_zip" ]]; then
 
   # Concatenate URL for config bundle from the given GitHub repo
   GITHUB_CONFIG_BUNDLE_URL="https://github.com/${GITHUB_CONFIG_SOURCE_REPO}/archive/${GITHUB_CONFIG_SOURCE_REVISION}.zip"
-  
+
   # Create a temporary file and download bundle to it
   config_repo_temp_zip_file=$(mktemp)
   echo "Downloading configs from ${GITHUB_CONFIG_BUNDLE_URL} into ${config_repo_temp_zip_file}"
@@ -47,20 +49,28 @@ if [[ "${VPN_CONFIG_SOURCE_TYPE}" == "github_zip" ]]; then
 
 elif [[ "${VPN_CONFIG_SOURCE_TYPE}" == "github_clone" ]]; then
   GITHUB_CONFIG_REPO_URL="https://github.com/${GITHUB_CONFIG_SOURCE_REPO}.git"
-  config_repo=/tmp/config-repo
+  config_repo=/config/vpn-configs-contrib
+
+  # Add safe directory for repo folder
+  git config --global --add safe.directory "${config_repo}"
 
   echo "Will get configs from ${GITHUB_CONFIG_REPO_URL}"
   # Check if git repo exists and clone or pull based on that
   if [[ -d ${config_repo} ]]; then
-    echo "Repository is already cloned, checking for update"
-    cd ${config_repo}
-    git pull
-    git checkout "${GITHUB_CONFIG_SOURCE_REVISION}"
+    GITHUB_CONFIG_SOURCE_LOCAL=$(git -C "${config_repo}" remote -v | head -1 | awk '{print $2}' | sed -e 's/https:\/\/github.com\///' -e 's/.git//')
+    if [ "$GITHUB_CONFIG_SOURCE_LOCAL" == "$GITHUB_CONFIG_SOURCE_REPO" ]; then
+      echo "Repository is already cloned, checking for update"
+      git -C "${config_repo}" pull
+      git -C "${config_repo}" checkout "${GITHUB_CONFIG_SOURCE_REVISION}"
+    else
+      echo "Cloning ${GITHUB_CONFIG_REPO_URL} into ${config_repo}"
+      config_repo_old="${config_repo}_old"
+      mv "${config_repo}" "${config_repo_old}"
+      git clone -b "${GITHUB_CONFIG_SOURCE_REVISION}" "${GITHUB_CONFIG_REPO_URL}" "${config_repo}"
+    fi
   else
     echo "Cloning ${GITHUB_CONFIG_REPO_URL} into ${config_repo}"
-    git clone "${GITHUB_CONFIG_REPO_URL}" ${config_repo}
-    cd ${config_repo}
-    git checkout "${GITHUB_CONFIG_SOURCE_REVISION}"
+    git clone -b "${GITHUB_CONFIG_SOURCE_REVISION}" "${GITHUB_CONFIG_REPO_URL}" "${config_repo}"
   fi
 
   # Find the specified provider folder. Should be under <tmpDir>/<some-root-folder>/openvpn/<provider>
@@ -76,8 +86,7 @@ elif [[ "${VPN_CONFIG_SOURCE_TYPE}" == "github_clone" ]]; then
   cp -r "${provider_configs}" "${VPN_PROVIDER_HOME}"
 
   exit 0
-
 else
-    "ERROR: VPN config source type ${VPN_CONFIG_SOURCE_TYPE} does not exist..."
-    exit 1
+  "ERROR: VPN config source type ${VPN_CONFIG_SOURCE_TYPE} does not exist..."
+  exit 1
 fi

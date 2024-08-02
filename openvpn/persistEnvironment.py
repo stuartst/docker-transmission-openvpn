@@ -14,6 +14,7 @@ args = parser.parse_args()
 
 wanted_variables = {
     'OPENVPN_PROVIDER',
+    'DEBUG',
     'ENABLE_UFW',
     'PUID',
     'PGID',
@@ -23,7 +24,8 @@ wanted_variables = {
     'DISABLE_PORT_UPDATER',
     'TZ',
     'PEER_DNS',
-    'PEER_DNS_PIN_ROUTES'
+    'PEER_DNS_PIN_ROUTES',
+    'CONFIG'
 }
 
 variables_to_persist = {}
@@ -41,9 +43,10 @@ for env_var in os.environ:
 
 # Dump resulting settings to file
 with open(args.env_var_script_file, 'w') as script_file:
+    script_file.write("#!/bin/bash\n")
     for var_name, var_value in variables_to_persist.items():
         script_file.write(
-            'export {env_var}={env_var_value}\n'.format(
+            'export {env_var}="{env_var_value}"\n'.format(
                 env_var=var_name,
                 env_var_value=var_value,
             ),

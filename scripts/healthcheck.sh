@@ -1,5 +1,7 @@
 #!/bin/bash
 
+source /etc/openvpn/utils.sh
+
 # Handle SIGTERM
 sigterm() {
     echo "Received SIGTERM, exiting..."
@@ -42,6 +44,7 @@ echo "Network is up"
 #Expected output is 2 for both checks, 1 for process and 1 for grep
 OPENVPN=$(pgrep openvpn | wc -l )
 TRANSMISSION=$(pgrep transmission | wc -l)
+PROXY=$(pgrep privoxy | wc -l)
 
 if [[ ${OPENVPN} -ne 1 ]]; then
 	echo "Openvpn process not running"
@@ -52,5 +55,17 @@ if [[ ${TRANSMISSION} -ne 1 ]]; then
 	exit 1
 fi
 
+if [[ ${WEBPROXY_ENABLED} =~ [yY][eE]?[Ss]?|[tT][Rr][Uu][eE] ]]; then
+  if [[ ${PROXY} -eq 0 ]]; then
+    echo "Privoxy warning: process was stopped, restarting."
+  fi
+    proxy_ip=$(grep -i "^listen-address" /etc/privoxy/config | awk -F ' ' '{print $2}' | awk -F ':' '{print $1}')
+    cont_ip=$(ip -j a show dev eth0 | jq -r .[].addr_info[].local)
+    if [[ ${proxy_ip} != ${cont_ip} ]]; then
+      echo "Privoxy error: container ip (${cont_ip} has changed: privoxy listening to ${proxy_ip}, restarting privoxy."
+      pkill privoxy || true
+      /opt/privoxy/start.sh
+    fi
+fi
 echo "Openvpn and transmission-daemon processes are running"
 exit 0

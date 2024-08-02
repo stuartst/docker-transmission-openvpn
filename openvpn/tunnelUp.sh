@@ -1,6 +1,16 @@
 #!/bin/bash
 # Source our persisted env variables from container startup
 . /etc/transmission/environment-variables.sh
+source /etc/openvpn/utils.sh
+
+# Update config status to success.
+CONFIG_STATUS=$(sed -n "s/^; status \(.*\)/\1/p" "${CONFIG}")
+if [[ -n "${CONFIG_STATUS}" ]]; then
+  CONFIG_STATUS="success"
+  sed -i "/^; status.*$/d" "${CONFIG}"
+  sed -i "\$q" "${CONFIG}" # Ensure config ends with a line feed
+  echo "; status ${CONFIG_STATUS}" >> "${CONFIG}"
+fi
 
 if [[ "${PEER_DNS,,}" == "true" ]]; then
         NS=
@@ -51,7 +61,7 @@ if [[ "${PEER_DNS,,}" == "true" ]]; then
         fi
 fi
 
-/etc/transmission/start.sh "$@"
+/etc/transmission/start.sh
 [[ -f /opt/privoxy/start.sh && -x /opt/privoxy/start.sh ]] && /opt/privoxy/start.sh
 
 exit 0

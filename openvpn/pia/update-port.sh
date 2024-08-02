@@ -4,6 +4,8 @@
 ## this is an amalgamation of two scripts to keep my PIA working, credit to the main authors, the original scripts linked in the READ.ME
 #v0.2
 
+source /etc/openvpn/utils.sh
+
 . /etc/transmission/environment-variables.sh
 
 # Settings
@@ -13,6 +15,12 @@ transmission_username=$(head -1 ${TRANSMISSION_PASSWD_FILE})
 transmission_passwd=$(tail -1 ${TRANSMISSION_PASSWD_FILE})
 pia_client_id_file=/etc/transmission/pia_client_id
 transmission_settings_file=${TRANSMISSION_HOME}/settings.json
+
+if [[ -z "${TRANSMISSION_RPC_URL}" ]]; then
+    # Fetch the default setting for `rpc-url`.
+    TRANSMISSION_RPC_URL="$(jq -r '."rpc-url"' /etc/transmission/default-settings.json)"
+fi
+TRANSMISSION_HOST="$(echo "http://localhost:${TRANSMISSION_RPC_PORT}${TRANSMISSION_RPC_URL}" | sed -E 's/(\/)$//g')"
 
 sleep 5
 
@@ -27,14 +35,12 @@ pf_host=$(ip route | grep tun | grep -v src | head -1 | awk '{ print $3 }')
 ###### Nextgen PIA port forwarding      ##################
 
 get_auth_token () {
-            tok=$(curl --insecure --silent --show-error --request POST --max-time $curl_max_time \
-                 --header "Content-Type: application/json" \
-                 --data "{\"username\":\"$user\",\"password\":\"$pass\"}" \
-                "https://www.privateinternetaccess.com/api/client/v2/token" | jq -r '.token')
-            [ $? -ne 0 ] && echo "Failed to acquire new auth token" && exit 1
-            #echo "$tok"
-    }
-
+  tok=$(curl --silent --show-error --request POST --max-time $curl_max_time \
+      --user "$user:$pass" \
+      "https://www.privateinternetaccess.com/gtoken/generateToken" | jq -r '.token')
+  [ $? -ne 0 ] && echo "Failed to acquire new auth token" && exit 1
+  #echo "$tok"
+}
 
 get_sig () {
   pf_getsig=$(curl --insecure --get --silent --show-error \
@@ -96,13 +102,13 @@ fi
 
 # make sure transmission is running and accepting requests
 echo "waiting for transmission to become responsive"
-until torrent_list="$(transmission-remote $TRANSMISSION_RPC_PORT $myauth -l)"; do sleep 10; done
+until torrent_list="$(transmission-remote "${TRANSMISSION_HOST}" $myauth -l)"; do sleep 10; done
 echo "transmission became responsive"
 output="$(echo "$torrent_list" | tail -n 2)"
 echo "$output"
 
 # get current listening port
-transmission_peer_port=$(transmission-remote $TRANSMISSION_RPC_PORT $myauth -si | grep Listenport | grep -oE '[0-9]+')
+transmission_peer_port=$(transmission-remote "${TRANSMISSION_HOST}" $myauth -si | grep Listenport | grep -oE '[0-9]+')
 if [[ "$new_port" != "$transmission_peer_port" ]]; then
   if [[ "true" = "$ENABLE_UFW" ]]; then
     echo "Update UFW rules before changing port in Transmission"
@@ -115,11 +121,11 @@ if [[ "$new_port" != "$transmission_peer_port" ]]; then
   fi
 
   echo "setting transmission port to $new_port"
-  transmission-remote ${TRANSMISSION_RPC_PORT} ${myauth} -p "$new_port"
+  transmission-remote "${TRANSMISSION_HOST}" ${myauth} -p "$new_port"
 
   echo "Checking port..."
   sleep 10
-  transmission-remote ${TRANSMISSION_RPC_PORT} ${myauth} -pt
+  transmission-remote "${TRANSMISSION_HOST}" ${myauth} -pt
 else
     echo "No action needed, port hasn't changed"
 fi

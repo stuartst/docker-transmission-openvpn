@@ -1,11 +1,12 @@
 # OpenVPN and Transmission with WebUI
 
-[![CircleCI builds](https://img.shields.io/circleci/build/github/haugene/docker-transmission-openvpn)](https://circleci.com/gh/haugene/docker-transmission-openvpn)
+[![Docker Build](https://img.shields.io/github/actions/workflow/status/haugene/docker-transmission-openvpn/docker-image-builds.yml
+)](https://hub.docker.com/r/haugene/transmission-openvpn/)
 [![Docker Pulls](https://img.shields.io/docker/pulls/haugene/transmission-openvpn.svg)](https://hub.docker.com/r/haugene/transmission-openvpn/)
 
 This container contains OpenVPN and Transmission with a configuration
 where Transmission is running only when OpenVPN has an active tunnel.
-It has built in support for many popular VPN providers to make the setup easier.
+It has built-in support for many popular VPN providers to make the setup easier.
 
 ## Read this first
 
@@ -18,26 +19,12 @@ in the [discussions](https://github.com/haugene/docker-transmission-openvpn/disc
 as we're trying to use that for general questions.
 
 If you have found what you believe to be an issue or bug, create an issue and provide
-enough details for us to have a chance to reproduce it or undertand what's going on.
+enough details for us to have a chance to reproduce it or understand what's going on.
 **NB:** Be sure to search for similar issues (open and closed) before opening a new one.
-
-### Just started having problems?
-
-Due to inactivity of the main developer(@haugene) we cannot create new releases.
-For now, please use the `:dev` branch if something isn't working or you want to be on the latest version.
-
-This means that the `latest` tag of this image now is version 4.0.
-
-If this release causes issues for you, try running the latest 3.x release:
-`haugene/transmission-openvpn:3.7.1`. Note that this is a temporary fix,
-there will not be any more releases on the 3.x line.
-
-Any instabilities with 4.0, please take it up in the 4.0 release discussion:
-[https://github.com/haugene/docker-transmission-openvpn/discussions/1936](https://github.com/haugene/docker-transmission-openvpn/discussions/1936)
 
 ## Quick Start
 
-These examples shows valid setups using PIA as provider for both
+These examples show valid setups using PIA as the provider for both
 docker run and docker-compose. Note that you should read some documentation
 at some point, but this is a good place to start.
 
@@ -46,6 +33,7 @@ at some point, but this is a good place to start.
 ```
 $ docker run --cap-add=NET_ADMIN -d \
               -v /your/storage/path/:/data \
+              -v /your/config/path/:/config \
               -e OPENVPN_PROVIDER=PIA \
               -e OPENVPN_CONFIG=france \
               -e OPENVPN_USERNAME=user \
@@ -54,10 +42,29 @@ $ docker run --cap-add=NET_ADMIN -d \
               --log-driver json-file \
               --log-opt max-size=10m \
               -p 9091:9091 \
-              haugene/transmission-openvpn:dev
+              haugene/transmission-openvpn
 ```
 
-### Docker Compose
+### Podman run
+
+Beware: container is run as privileged, meaning it has full access to host OS.
+
+```
+$ podman run --privileged -d \
+              -v /your/storage/path/:/data \
+              -v /your/config/path/:/config \
+              -e OPENVPN_PROVIDER=PIA \
+              -e OPENVPN_CONFIG=france \
+              -e OPENVPN_USERNAME=user \
+              -e OPENVPN_PASSWORD=pass \
+              -e LOCAL_NETWORK=192.168.0.0/16 \
+              --log-driver k8s-file \
+              --log-opt max-size=10m \
+              -p 9091:9091 \
+              haugene/transmission-openvpn
+```
+
+### Docker version 3.x Compose
 ```
 version: '3.3'
 services:
@@ -66,6 +73,7 @@ services:
             - NET_ADMIN
         volumes:
             - '/your/storage/path/:/data'
+            - '/your/config/path/:/config'
         environment:
             - OPENVPN_PROVIDER=PIA
             - OPENVPN_CONFIG=france
@@ -78,13 +86,59 @@ services:
                 max-size: 10m
         ports:
             - '9091:9091'
-        image: haugene/transmission-openvpn:dev
+        image: haugene/transmission-openvpn
 ```
+
+### Docker version 2.x Compose
+```
+version: "2.0"
+services:
+    transmission-openvpn:
+        container_name: transmission
+        cap_add:
+            - NET_ADMIN
+        volumes:
+            - '/your/storage/path/:/data'
+            - '/your/config/path/:/config'
+        environment:
+            - OPENVPN_PROVIDER=PIA
+            - OPENVPN_CONFIG=france
+            - OPENVPN_USERNAME=user
+            - OPENVPN_PASSWORD=pass
+            - LOCAL_NETWORK=192.168.0.0/16
+        logging:
+            driver: "json-file"
+            options:
+                max-size: 10m
+        ports:
+            - 9091:9091
+        image: haugene/transmission-openvpn
+```
+
+## Known issues
+
+If you've been running a stable setup that has recently started to fail, please check your logs.
+Are you seeing `curl: (6) getaddrinfo() thread failed to start` or `WARNING: initial DNS resolution test failed`?
+Then have a look at [#2410](https://github.com/haugene/docker-transmission-openvpn/issues/2410)
+and [this comment](https://github.com/haugene/docker-transmission-openvpn/issues/2410#issuecomment-1319299598)
+in particular. There is a fix and a workaround available.
+
+## Image versioning
+
+We aim to create periodic fixed releases with a [semver](https://semver.org/) versioning scheme.
+The latest of the tagged fixed releases will also have the `latest` tag.
+
+A semver release will be tagged with `major`, `major.minor` and `major.minor.patch` versions so that you can lock
+the version at either level.
+
+We also have a tag called `edge` which will always be the latest commit on `master`, and `dev` which is the last commit on the `dev` branch.
+From time to time we can also have various `beta` branches and tags, but using either dev or beta tags is probably not for the average user
+and you should expect there to be occasional breakage or even the deletion of the tags upstream.
 
 ## Please help out (about:maintenance)
 This image was created for my own use, but sharing is caring, so it had to be open source.
 It has now gotten quite popular, and that's great! But keeping it up to date, providing support, fixes
-and new features takes time. If you feel that you're getting a good tool and want to support it, there are a couple of options:
+and new features take time. If you feel that you're getting a good tool and want to support it, there are a couple of options:
 
 A small montly amount through [![Donate with Patreon](images/patreon.png)](https://www.patreon.com/haugene) or
 a one time donation with [![Donate with PayPal](https://img.shields.io/badge/Donate-PayPal-green.svg)](https://www.paypal.com/cgi-bin/webscr?cmd=_s-xclick&hosted_button_id=73XHRSK65KQYC)
